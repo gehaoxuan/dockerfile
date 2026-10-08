@@ -1,0 +1,61 @@
+# Weekly ModelArts-flavoured CANN master image (ma-user, uid 1000) for
+# Ubuntu 22.04 / aarch64, targeting ModelArts custom notebooks in
+# cn-southwest-2. Single arch, so no manifest job.
+#
+# Reuses the same repository configuration as cann-master-weekly:
+# Repository variables: IMAGE_REGISTRY, IMAGE_NAMESPACE
+# Repository secrets:   REGISTRY_USERNAME, REGISTRY_PASSWORD
+
+name: cann-master-modelarts-weekly
+
+on:
+  schedule:
+    # Tuesday 15:00 Asia/Shanghai (UTC+8) = Tuesday 07:00 UTC
+    - cron: "0 7 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: cann-master-modelarts-weekly
+  cancel-in-progress: false
+
+env:
+  CANN_MASTER_INDEX: https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/master
+  CANN_CHIP: 910b
+  IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+  IMAGE_NAMESPACE: ${{ vars.IMAGE_NAMESPACE }}
+
+jobs:
+  build:
+    name: build-modelarts-ubuntu22.04-arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Build and push
+        env:
+          PLATFORM: linux/arm64
+          CANN_ARCH: aarch64
+        run: |
+          set -euo pipefail
+          BUILD_DIR=$(curl -fsSL "${CANN_MASTER_INDEX}/" | grep -oE '[0-9]{14,}' | head -1)
+          PACKAGES=$(curl -fsSL "${CANN_MASTER_INDEX}/${BUILD_DIR}/" | grep -oE 'Ascend-cann-[^"<]+\.run' | sort -u)
+          TOOLKIT_URL="${CANN_MASTER_INDEX}/${BUILD_DIR}/$(echo "$PACKAGES" | grep Ascend-cann-toolkit | grep "$CANN_ARCH")"
+          OPS_URL="${CANN_MASTER_INDEX}/${BUILD_DIR}/$(echo "$PACKAGES" | grep "Ascend-cann-${CANN_CHIP}-ops" | grep "$CANN_ARCH")"
+          IMAGE_TAG="${IMAGE_REGISTRY}/${IMAGE_NAMESPACE}/cann:master-910b-ubuntu22.04-modelarts"
+
+          docker build \
+            --platform "$PLATFORM" \
+            -f "cann/master/modelarts/ubuntu22.04/Dockerfile" \
+            --build-arg "CANN_TOOLKIT_URL=${TOOLKIT_URL}" \
+            --build-arg "CANN_OPS_URL=${OPS_URL}" \
+            -t "$IMAGE_TAG" \
+            .
+          docker push "$IMAGE_TAG"
